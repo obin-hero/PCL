@@ -26,13 +26,16 @@ import torchvision.models as models
 import pcl.loader
 import pcl.builder
 
+from habitat_dataset import HabitatDataset
+from resnet import resnet18, resnet50
+
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR',
-                    help='path to dataset')
+# parser.add_argument('data', metavar='DIR',
+#                     help='path to dataset')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
                     help='model architecture: ' +
@@ -80,7 +83,7 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
-parser.add_argument('--low-dim', default=128, type=int,
+parser.add_argument('--low-dim', default=512, type=int,
                     help='feature dimension (default: 128)')
 parser.add_argument('--pcl-r', default=16384, type=int,
                     help='queue size; number of negative pairs; needs to be smaller than num_cluster (default: 16384)')
@@ -167,7 +170,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # create model
     print("=> creating model '{}'".format(args.arch))
     model = pcl.builder.MoCo(
-        models.__dict__[args.arch],
+        eval(args.arch),
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp)
     print(model)
 
@@ -227,14 +230,14 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
+    #traindir = args.data#os.path.join(args.data, 'train')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     
     if args.aug_plus:
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
         augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+            #transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
             transforms.RandomApply([
                 transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
             ], p=0.8),
@@ -247,7 +250,7 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
         augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+            #transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
             transforms.RandomGrayscale(p=0.2),
             transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
             transforms.RandomHorizontalFlip(),
@@ -257,18 +260,23 @@ def main_worker(gpu, ngpus_per_node, args):
         
     # center-crop augmentation 
     eval_augmentation = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        #transforms.Resize(256),
+        #transforms.CenterCrop(224),
         transforms.ToTensor(),
         normalize
         ])    
        
-    train_dataset = pcl.loader.ImageFolderInstance(
-        traindir,
-        pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
-    eval_dataset = pcl.loader.ImageFolderInstance(
-        traindir,
-        eval_augmentation)
+    #train_dataset = pcl.loader.ImageFolderInstance(
+        # traindir,
+        # pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+    #eval_dataset = pcl.loader.ImageFolderInstance(
+        # traindir,
+        # eval_augmentation)
+    data_dir = '/data1/obin/loc_data_12view_gibson/'
+    train_list = [os.path.join(data_dir, 'train',x) for x in os.listdir(os.path.join(data_dir,'train'))]
+    eval_list = [os.path.join(data_dir, 'train',x) for x in os.listdir(os.path.join(data_dir,'train'))]
+    train_dataset = HabitatDataset(train_list, pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+    eval_dataset = HabitatDataset(eval_list, eval_augmentation)
     
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -395,7 +403,7 @@ def compute_features(eval_loader, model, args):
     features = torch.zeros(len(eval_loader.dataset),args.low_dim).cuda()
     for i, (images, index) in enumerate(tqdm(eval_loader)):
         with torch.no_grad():
-            images = images.cuda(non_blocking=True)
+            images = images[0].cuda(non_blocking=True)
             feat = model(images,is_eval=True) 
             features[index] = feat
     dist.barrier()        
